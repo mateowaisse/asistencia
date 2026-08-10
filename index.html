@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Asistencia — Tel Aviv</title>
+<style>
+  :root {
+    --azul: #1F3864; --verde: #2E7D32; --amar: #F9A825; --rojo: #C62828;
+    --gris: #F4F5F7;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font: 16px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+         background: var(--gris); color: #111; }
+  header { background: var(--azul); color: #fff; padding: 12px 14px;
+           display: flex; justify-content: space-between; align-items: center; }
+  header b { font-size: 15px; }
+  #estadoRed { font-size: 12px; padding: 3px 9px; border-radius: 20px; background: #ffffff22; }
+  main { padding: 14px; max-width: 620px; margin: 0 auto; }
+  .card { background: #fff; border-radius: 12px; padding: 14px; margin-bottom: 12px;
+          box-shadow: 0 1px 4px #0001; }
+  label { display: block; font-size: 12px; font-weight: 700; color: #555;
+          margin: 10px 0 4px; text-transform: uppercase; letter-spacing: .3px; }
+  input, select { width: 100%; padding: 11px; font-size: 16px; border: 1px solid #ccc;
+                  border-radius: 8px; background: #fff; }
+  .fila { display: flex; gap: 10px; }
+  .fila > div { flex: 1; }
+  button { width: 100%; padding: 15px; font-size: 17px; font-weight: 700; border: 0;
+           border-radius: 10px; color: #fff; background: var(--azul); margin-top: 12px; }
+  button.sec { background: #666; }
+  button.peligro { background: var(--rojo); }
+  button:disabled { background: #aaa; }
+
+  #reader { width: 100%; border-radius: 12px; overflow: hidden; background: #000; }
+  #reader video { width: 100% !important; display: block; }
+
+  #feedback { border-radius: 12px; padding: 18px 14px; text-align: center; color: #fff;
+              font-weight: 800; font-size: 22px; margin-bottom: 12px; line-height: 1.25;
+              background: #9aa; min-height: 76px; display: flex; flex-direction: column;
+              justify-content: center; }
+  #feedback small { display: block; font-size: 14px; font-weight: 600; opacity: .92; margin-top: 4px; }
+  .ok { background: var(--verde) !important; }
+  .warn { background: var(--amar) !important; }
+  .err { background: var(--rojo) !important; }
+
+  .contador { text-align: center; font-size: 34px; font-weight: 800; color: var(--azul); }
+  .contador span { font-size: 16px; color: #666; font-weight: 600; }
+  .barra { height: 8px; background: #e0e0e0; border-radius: 6px; overflow: hidden; margin-top: 8px; }
+  .barra i { display: block; height: 100%; background: var(--verde); width: 0; transition: width .3s; }
+
+  ul.faltan { list-style: none; padding: 0; margin: 8px 0 0; max-height: 190px; overflow: auto;
+              font-size: 14px; }
+  ul.faltan li { padding: 6px 2px; border-bottom: 1px solid #eee; }
+  details summary { font-size: 14px; font-weight: 700; color: #555; cursor: pointer; padding: 4px 0; }
+  .aviso { background: #FFF4E5; border-left: 4px solid var(--amar); padding: 10px;
+           border-radius: 6px; font-size: 13.5px; margin-top: 10px; }
+  .oculto { display: none !important; }
+</style>
+</head>
+<body>
+
+<header>
+  <b>Asistencia · Tel Aviv</b>
+  <span id="estadoRed">…</span>
+</header>
+
+<main>
+
+  <!-- ============ PANTALLA 1: configurar ============ -->
+  <section id="p1">
+    <div class="card">
+      <label>Fecha</label>
+      <input type="date" id="fecha">
+
+      <label>Bloque</label>
+      <select id="bloque"></select>
+
+      <div class="fila">
+        <div>
+          <label>Hora de inicio</label>
+          <input type="time" id="inicio">
+        </div>
+        <div>
+          <label>Tolerancia</label>
+          <input type="text" id="tol" disabled value="15 min">
+        </div>
+      </div>
+
+      <label>Actividad (opcional)</label>
+      <input type="text" id="actividad" placeholder="Peula sobre Aliyá">
+
+      <button onclick="empezar()">Empezar a escanear</button>
+      <div id="pendientes" class="aviso oculto"></div>
+    </div>
+  </section>
+
+  <!-- ============ PANTALLA 2: escanear ============ -->
+  <section id="p2" class="oculto">
+    <div id="feedback">Apuntá la cámara al QR</div>
+
+    <div class="card">
+      <div class="contador"><b id="cnt">0</b> <span>/ <b id="tot">0</b></span></div>
+      <div class="barra"><i id="prog"></i></div>
+    </div>
+
+    <div id="reader"></div>
+
+    <div class="card">
+      <details>
+        <summary id="resumenFaltan">Todavía no escaneó nadie</summary>
+        <ul class="faltan" id="listaFaltan"></ul>
+      </details>
+      <button class="sec" onclick="pausar()" id="btnPausa">Pausar cámara</button>
+      <button class="peligro" onclick="terminar()">Terminar y cerrar bloque</button>
+    </div>
+  </section>
+
+</main>
+
+<script src="config.js"></script>
+<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+<script>
+// =====================================================================
+//  Estado
+// =====================================================================
+let PADRON = [];              // [{codigo, nombre, depto}]
+let porCodigo = {};
+let escaneados = {};          // codigo -> true (de este bloque)
+let ctx = null;               // {fecha, bloque, inicio, actividad}
+let scanner = null;
+let pausado = false;
+let ultimoCodigo = '', ultimoTs = 0;
+
+const LS_COLA = 'cola_asistencia_v1';
+const LS_PADRON = 'padron_v1';
+const LS_SESION = 'sesion_v1';
+
+// =====================================================================
+//  Cola offline: si no hay señal, los escaneos quedan guardados acá
+// =====================================================================
+function cola() { try { return JSON.parse(localStorage.getItem(LS_COLA) || '[]'); } catch (e) { return []; } }
+function guardarCola(c) { localStorage.setItem(LS_COLA, JSON.stringify(c)); }
+function encolar(item) { const c = cola(); c.push(item); guardarCola(c); pintarRed(); }
+
+async function postear(payload) {
+  const r = await fetch(URL_APPS_SCRIPT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ clave: CLAVE }, payload))
+  });
+  return await r.json();
+}
+
+let sincronizando = false;
+async function sincronizar() {
+  if (sincronizando) return;
+  const c = cola();
+  if (!c.length) { pintarRed(); return; }
+  sincronizando = true;
+  try {
+    const res = await postear({ tipo: 'lote', items: c });
+    if (res && res.ok) guardarCola([]);
+  } catch (e) {
+    // sin conexión: queda para el próximo intento
+  }
+  sincronizando = false;
+  pintarRed();
+}
+setInterval(sincronizar, 8000);
+window.addEventListener('online', sincronizar);
+
+function pintarRed() {
+  const n = cola().length;
+  const el = document.getElementById('estadoRed');
+  if (!navigator.onLine) { el.textContent = 'Sin señal · ' + n + ' en cola'; return; }
+  el.textContent = n ? ('Enviando ' + n + '…') : 'Sincronizado';
+}
+
+// =====================================================================
+//  Padrón
+// =====================================================================
+async function cargarPadron() {
+  try {
+    const r = await fetch(URL_APPS_SCRIPT + '?clave=' + encodeURIComponent(CLAVE));
+    const d = await r.json();
+    if (d.ok && d.janijim && d.janijim.length) {
+      PADRON = d.janijim;
+      localStorage.setItem(LS_PADRON, JSON.stringify(PADRON));
+    }
+  } catch (e) { /* offline: usamos el guardado */ }
+
+  if (!PADRON.length) {
+    try { PADRON = JSON.parse(localStorage.getItem(LS_PADRON) || '[]'); } catch (e) { PADRON = []; }
+  }
+  porCodigo = {};
+  PADRON.forEach(j => porCodigo[j.codigo.toUpperCase()] = j);
+  document.getElementById('tot').textContent = PADRON.length;
+
+  if (!PADRON.length) {
+    alert('No pude cargar el padrón.\n\nRevisá que la URL y la clave en config.js sean correctas ' +
+          'y que el web app esté publicado para "Cualquier persona".');
+  }
+}
+
+// =====================================================================
+//  Inicio
+// =====================================================================
+(function init() {
+  const sel = document.getElementById('bloque');
+  BLOQUES.forEach(b => { const o = document.createElement('option'); o.value = b; o.textContent = b; sel.appendChild(o); });
+
+  const ahora = new Date();
+  const h = ahora.getHours();
+  sel.value = h < 12 ? BLOQUES[0] : (h < 18 ? BLOQUES[1] : BLOQUES[2]);
+
+  document.getElementById('fecha').value = ahora.toISOString().slice(0, 10);
+  document.getElementById('inicio').value =
+    String(h).padStart(2, '0') + ':' + String(ahora.getMinutes()).padStart(2, '0');
+  document.getElementById('tol').value = TOLERANCIA_MIN + ' min';
+
+  const n = cola().length;
+  if (n) {
+    const d = document.getElementById('pendientes');
+    d.textContent = 'Hay ' + n + ' escaneo(s) sin enviar de una sesión anterior. ' +
+                    'Se van a sincronizar solos cuando haya señal.';
+    d.classList.remove('oculto');
+  }
+
+  cargarPadron();
+  pintarRed();
+  sincronizar();
+})();
+
+// =====================================================================
+//  Escaneo
+// =====================================================================
+function empezar() {
+  if (!PADRON.length) { cargarPadron(); return; }
+  ctx = {
+    fecha: document.getElementById('fecha').value,
+    bloque: document.getElementById('bloque').value,
+    inicio: document.getElementById('inicio').value,
+    actividad: document.getElementById('actividad').value.trim()
+  };
+  localStorage.setItem(LS_SESION, JSON.stringify(ctx));
+  escaneados = {};
+  document.getElementById('p1').classList.add('oculto');
+  document.getElementById('p2').classList.remove('oculto');
+  actualizarUI();
+
+  scanner = new Html5Qrcode('reader');
+  scanner.start(
+    { facingMode: 'environment' },
+    { fps: 12, qrbox: { width: 250, height: 250 } },
+    onScan,
+    () => {}
+  ).catch(err => {
+    feedback('No pude abrir la cámara', String(err), 'err');
+  });
+}
+
+function clasificar(hora, inicio) {
+  if (!inicio) return 'Presente';
+  const m = s => { const p = s.split(':'); return +p[0] * 60 + +p[1]; };
+  const atraso = m(hora) - m(inicio);
+  if (atraso <= 0) return 'Presente';
+  if (atraso <= TOLERANCIA_MIN) return 'Tarde';
+  return 'Falta';
+}
+
+function onScan(texto) {
+  const codigo = String(texto).trim().toUpperCase();
+  const ahora = Date.now();
+  if (codigo === ultimoCodigo && ahora - ultimoTs < 2500) return;  // rebote
+  ultimoCodigo = codigo; ultimoTs = ahora;
+
+  const j = porCodigo[codigo];
+  if (!j) { beep(200); feedback('Código desconocido', 'No está en el padrón', 'err'); return; }
+  if (escaneados[codigo]) { beep(200); feedback(j.nombre, 'YA fue escaneado', 'err'); return; }
+
+  const d = new Date();
+  const hora = String(d.getHours()).padStart(2, '0') + ':' +
+               String(d.getMinutes()).padStart(2, '0') + ':' +
+               String(d.getSeconds()).padStart(2, '0');
+  const estado = clasificar(hora.slice(0, 5), ctx.inicio);
+
+  escaneados[codigo] = true;
+  encolar({
+    codigo: codigo, fecha: ctx.fecha, bloque: ctx.bloque,
+    actividad: ctx.actividad, hora: hora, inicio: ctx.inicio
+  });
+
+  beep(estado === 'Presente' ? 900 : 500);
+  feedback(j.nombre, estado === 'Presente' ? 'Presente' :
+                     estado === 'Tarde' ? 'Llegó tarde' : 'Fuera de tolerancia — FALTA',
+           estado === 'Presente' ? 'ok' : estado === 'Tarde' ? 'warn' : 'err');
+  actualizarUI();
+  sincronizar();
+}
+
+function feedback(titulo, sub, clase) {
+  const el = document.getElementById('feedback');
+  el.className = clase || '';
+  el.innerHTML = titulo + (sub ? '<small>' + sub + '</small>' : '');
+}
+
+function beep(hz) {
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)();
+    const o = a.createOscillator(), g = a.createGain();
+    o.connect(g); g.connect(a.destination);
+    o.frequency.value = hz; g.gain.value = 0.15;
+    o.start(); setTimeout(() => { o.stop(); a.close(); }, 130);
+  } catch (e) {}
+}
+
+function actualizarUI() {
+  const n = Object.keys(escaneados).length;
+  document.getElementById('cnt').textContent = n;
+  document.getElementById('prog').style.width =
+    (PADRON.length ? (n / PADRON.length * 100) : 0) + '%';
+
+  const faltan = PADRON.filter(j => !escaneados[j.codigo.toUpperCase()]);
+  document.getElementById('resumenFaltan').textContent =
+    'Faltan ' + faltan.length + ' — tocá para ver quiénes';
+  document.getElementById('listaFaltan').innerHTML =
+    faltan.map(j => '<li>' + j.nombre + (j.depto ? ' <small>· ' + j.depto + '</small>' : '') + '</li>').join('');
+}
+
+function pausar() {
+  if (!scanner) return;
+  const b = document.getElementById('btnPausa');
+  if (pausado) { scanner.resume(); b.textContent = 'Pausar cámara'; }
+  else { scanner.pause(true); b.textContent = 'Reanudar cámara'; }
+  pausado = !pausado;
+}
+
+async function terminar() {
+  const faltan = PADRON.length - Object.keys(escaneados).length;
+  const msg = faltan
+    ? faltan + ' janij(im) no fueron escaneados y van a quedar como FALTA.\n\n¿Cerrar el bloque igual?'
+    : 'Todos escaneados. ¿Cerrar el bloque?';
+  if (!confirm(msg)) return;
+
+  if (scanner) { try { await scanner.stop(); } catch (e) {} }
+  await sincronizar();
+
+  try {
+    await postear({ tipo: 'cerrar', fecha: ctx.fecha, bloque: ctx.bloque, actividad: ctx.actividad });
+    alert('Bloque cerrado y enviado.');
+  } catch (e) {
+    alert('Los escaneos quedaron guardados, pero no pude cerrar el bloque sin señal.\n' +
+          'Cerralo después desde el Sheet: menú Asistencia > Cerrar bloque.');
+  }
+  location.reload();
+}
+</script>
+</body>
+</html>

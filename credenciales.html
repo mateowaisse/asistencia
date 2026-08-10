@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Generar credenciales QR</title>
+<style>
+  :root { --azul: #1F3864; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+         background: #F4F5F7; color: #111; }
+  header { background: var(--azul); color: #fff; padding: 14px 18px; }
+  header b { font-size: 17px; }
+  main { max-width: 900px; margin: 0 auto; padding: 18px; }
+  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 14px;
+          box-shadow: 0 1px 4px #0001; }
+  label { display: block; font-size: 12px; font-weight: 700; color: #555;
+          margin-bottom: 5px; text-transform: uppercase; letter-spacing: .3px; }
+  textarea { width: 100%; height: 190px; padding: 10px; font: 13px/1.5 ui-monospace, Menlo, monospace;
+             border: 1px solid #ccc; border-radius: 8px; }
+  button { padding: 13px 22px; font-size: 16px; font-weight: 700; border: 0; border-radius: 9px;
+           color: #fff; background: var(--azul); margin-right: 8px; margin-top: 10px; }
+  button.sec { background: #666; }
+  button:disabled { background: #aaa; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px; }
+  .item { text-align: center; }
+  .item canvas { width: 100%; border: 1px solid #ddd; border-radius: 8px; background: #fff; }
+  .item a { display: inline-block; margin-top: 6px; font-size: 13px; color: var(--azul); font-weight: 600; }
+  .nota { background: #FFF4E5; border-left: 4px solid #F9A825; padding: 12px;
+          border-radius: 6px; font-size: 14px; }
+  code { background: #eef; padding: 1px 5px; border-radius: 3px; font-size: 13px; }
+  #estado { font-size: 14px; color: #555; margin-top: 8px; }
+</style>
+</head>
+<body>
+
+<header><b>Generar credenciales QR</b></header>
+
+<main>
+
+  <div class="card">
+    <p style="margin-top:0">
+      En el Sheet: menú <b>Asistencia → Exportar padrón para credenciales</b>, copiá todo y pegalo acá.
+      Una línea por janij, con el nombre y el código separados por tabulación.
+    </p>
+    <label>Padrón</label>
+    <textarea id="entrada" placeholder="Tomas Levi&#9;TLV-A7K3-M9Q-X2P&#10;Micaela Behar&#9;TLV-B2N8-R4T-K7L"></textarea>
+    <button onclick="generar()">Generar credenciales</button>
+    <button class="sec" id="btnZip" onclick="descargarZip()" disabled>Descargar todas (.zip)</button>
+    <div id="estado"></div>
+  </div>
+
+  <div class="card nota">
+    El nombre va impreso arriba del código. Cuando escanees, mirá que el nombre de la pantalla
+    del janij coincida con la persona que la sostiene — es lo único que impide que se pasen el QR entre ellos.
+    <br><br>
+    Mandale a cada uno <b>solo su imagen</b>. Si mandás el ZIP entero al grupo, todos tienen el código de todos.
+  </div>
+
+  <div class="card">
+    <div class="grid" id="salida"></div>
+  </div>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script>
+const W = 620, H = 780;          // tamaño de cada credencial en px
+let generadas = [];              // [{nombre, archivo, canvas}]
+
+function slug(s) {
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
+}
+
+function dibujar(nombre, codigo) {
+  const cv = document.createElement('canvas');
+  cv.width = W; cv.height = H;
+  const c = cv.getContext('2d');
+
+  c.fillStyle = '#fff'; c.fillRect(0, 0, W, H);
+
+  // marco
+  c.strokeStyle = '#1F3864'; c.lineWidth = 6;
+  c.strokeRect(3, 3, W - 6, H - 6);
+
+  // ---- NOMBRE ARRIBA ----
+  let tam = 54;
+  c.fillStyle = '#111';
+  c.textAlign = 'center'; c.textBaseline = 'middle';
+  do {
+    c.font = '700 ' + tam + 'px -apple-system, Segoe UI, Arial, sans-serif';
+    tam -= 2;
+  } while (c.measureText(nombre).width > W - 60 && tam > 20);
+  c.fillText(nombre, W / 2, 72);
+
+  // línea separadora
+  c.strokeStyle = '#1F3864'; c.lineWidth = 3;
+  c.beginPath(); c.moveTo(40, 118); c.lineTo(W - 40, 118); c.stroke();
+
+  // ---- QR ----
+  const qr = qrcode(0, 'M');
+  qr.addData(codigo);
+  qr.make();
+  const n = qr.getModuleCount();
+  const lado = W - 120;
+  const px = Math.floor(lado / n);
+  const real = px * n;
+  const x0 = Math.floor((W - real) / 2), y0 = 155;
+
+  c.fillStyle = '#000';
+  for (let r = 0; r < n; r++) {
+    for (let col = 0; col < n; col++) {
+      if (qr.isDark(r, col)) c.fillRect(x0 + col * px, y0 + r * px, px, px);
+    }
+  }
+
+  // ---- pie ----
+  c.fillStyle = '#666';
+  c.font = '600 24px ui-monospace, Menlo, monospace';
+  c.fillText(codigo, W / 2, y0 + real + 42);
+  c.font = '400 20px -apple-system, Segoe UI, Arial, sans-serif';
+  c.fillText('Etapa Tel Aviv', W / 2, y0 + real + 76);
+
+  return cv;
+}
+
+function generar() {
+  const lineas = document.getElementById('entrada').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  const salida = document.getElementById('salida');
+  salida.innerHTML = '';
+  generadas = [];
+
+  const errores = [];
+  lineas.forEach((linea, i) => {
+    const partes = linea.split(/\t|\s{2,}|\s*\|\s*/);
+    if (partes.length < 2) { errores.push('Línea ' + (i + 1) + ': ' + linea); return; }
+    const codigo = partes.pop().trim();
+    const nombre = partes.join(' ').trim();
+    if (!nombre || !codigo) { errores.push('Línea ' + (i + 1) + ': ' + linea); return; }
+
+    const cv = dibujar(nombre, codigo);
+    const archivo = slug(nombre) + '.png';
+    generadas.push({ nombre, archivo, canvas: cv });
+
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.appendChild(cv);
+    const a = document.createElement('a');
+    a.textContent = 'Descargar';
+    a.download = archivo;
+    a.href = cv.toDataURL('image/png');
+    div.appendChild(a);
+    salida.appendChild(div);
+  });
+
+  document.getElementById('btnZip').disabled = generadas.length === 0;
+  document.getElementById('estado').textContent =
+    generadas.length + ' credencial(es) generada(s).' +
+    (errores.length ? '  No pude leer ' + errores.length + ' línea(s): ' + errores.join(' / ') : '');
+}
+
+async function descargarZip() {
+  const zip = new JSZip();
+  for (const g of generadas) {
+    const b64 = g.canvas.toDataURL('image/png').split(',')[1];
+    zip.file(g.archivo, b64, { base64: true });
+  }
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'credenciales_tel_aviv.zip';
+  a.click();
+}
+</script>
+</body>
+</html>
