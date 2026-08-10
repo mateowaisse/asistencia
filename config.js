@@ -3,10 +3,10 @@
 // =====================================================================
 
 // URL del web app de Apps Script (la que termina en /exec)
-const URL_APPS_SCRIPT = 'PEGAR_ACA_LA_URL_QUE_TERMINA_EN_exec';
+const URL_APPS_SCRIPT = 'https://script.google.com/macros/s/AKfycbwMKISP2559Y4hwotuKSmziQi8-GEM03QJlFX0GBB2MgV1Ym33Xj0lnT_wr7wTcIDsTYQ/exec';
 
 // La misma clave que pusiste en CONFIG.CLAVE dentro de Codigo.gs
-const CLAVE = 'cambiame-por-algo-largo-y-random';
+const CLAVE = 'madrijim_gorra';
 
 // =====================================================================
 
