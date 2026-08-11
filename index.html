@@ -151,19 +151,31 @@ async function postear(payload) {
   return await r.json();
 }
 
-let sincronizando = false;
+// OJO: esta función tiene que ser esperable de verdad. Si devuelve antes de
+// tiempo cuando ya hay un envío en curso, el "cerrar bloque" llega al servidor
+// antes que los escaneos y marca falta a todo el mundo.
+let envioEnCurso = null;
+
 async function sincronizar() {
-  if (sincronizando) return;
+  if (envioEnCurso) return envioEnCurso;      // esperamos el que ya está corriendo
   const c = cola();
   if (!c.length) { pintarRed(); return; }
-  sincronizando = true;
-  try {
-    const res = await postear({ tipo: 'lote', items: c });
-    if (res && res.ok) guardarCola([]);
-  } catch (e) {
-    // sin conexión: queda para el próximo intento
-  }
-  sincronizando = false;
+
+  const enviados = c.length;                   // cuántos estoy mandando ahora
+  envioEnCurso = (async function () {
+    try {
+      const res = await postear({ tipo: 'lote', items: c });
+      if (res && res.ok) {
+        // NO vaciar la cola entera: pueden haber entrado escaneos nuevos
+        // mientras esta petición estaba en vuelo.
+        guardarCola(cola().slice(enviados));
+      }
+    } catch (e) {
+      // sin conexión: queda para el próximo intento
+    }
+  })();
+
+  try { await envioEnCurso; } finally { envioEnCurso = null; }
   pintarRed();
 }
 setInterval(sincronizar, 8000);
@@ -343,14 +355,26 @@ async function terminar() {
   if (!confirm(msg)) return;
 
   if (scanner) { try { await scanner.stop(); } catch (e) {} }
-  await sincronizar();
+
+  // Primero vaciar la cola de verdad. Reintentamos un par de veces por las dudas.
+  for (let i = 0; i < 3 && cola().length; i++) await sincronizar();
+
+  // Si quedó algo sin enviar, NO cerramos: cerrar ahora marcaría falta
+  // a gente que en realidad se escaneó.
+  if (cola().length) {
+    alert('Quedaron ' + cola().length + ' escaneo(s) sin enviar por falta de señal.\n\n' +
+          'NO cerré el bloque para no marcarlos como falta. Buscá señal y volvé a ' +
+          'entrar: se mandan solos. Después cerrá el bloque desde el Sheet ' +
+          '(menú Asistencia > Cerrar bloque).');
+    return;
+  }
 
   try {
-    await postear({ tipo: 'cerrar', fecha: ctx.fecha, bloque: ctx.bloque, actividad: ctx.actividad });
-    alert('Bloque cerrado y enviado.');
+    const r = await postear({ tipo: 'cerrar', fecha: ctx.fecha, bloque: ctx.bloque, actividad: ctx.actividad });
+    alert('Bloque cerrado. ' + ((r && r.cerrados) || 0) + ' quedaron como falta.');
   } catch (e) {
-    alert('Los escaneos quedaron guardados, pero no pude cerrar el bloque sin señal.\n' +
-          'Cerralo después desde el Sheet: menú Asistencia > Cerrar bloque.');
+    alert('Los escaneos se enviaron bien, pero no pude cerrar el bloque.\n' +
+          'Cerralo desde el Sheet: menú Asistencia > Cerrar bloque.');
   }
   location.reload();
 }
