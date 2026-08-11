@@ -12,3 +12,4 @@ const CLAVE = 'madrijim_gorra';
 
 const BLOQUES = ['Mañana', 'Tarde', 'Noche'];
 const TOLERANCIA_MIN = 15;
+const GRACIA_MIN = 10;
