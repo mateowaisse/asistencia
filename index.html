@@ -275,7 +275,7 @@ function clasificar(hora, inicio) {
   if (!inicio) return 'Presente';
   const m = s => { const p = s.split(':'); return +p[0] * 60 + +p[1]; };
   const atraso = m(hora) - m(inicio);
-  if (atraso <= 0) return 'Presente';
+  if (atraso <= GRACIA_MIN) return 'Presente';
   if (atraso <= TOLERANCIA_MIN) return 'Tarde';
   return 'Falta';
 }
