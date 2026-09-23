@@ -55,6 +55,26 @@
   .aviso { background: #FFF4E5; border-left: 4px solid var(--amar); padding: 10px;
            border-radius: 6px; font-size: 13.5px; margin-top: 10px; }
   .oculto { display: none !important; }
+
+  /* Pestañas Cámara / Lista */
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tabs button { margin: 0; padding: 12px; font-size: 15px; background: #fff; color: var(--azul);
+                 border: 2px solid var(--azul); }
+  .tabs button.activa { background: var(--azul); color: #fff; }
+
+  /* Lista para marcar con el dedo */
+  #buscar { margin-bottom: 8px; }
+  ul.todos { list-style: none; padding: 0; margin: 0; max-height: 55vh; overflow: auto; }
+  ul.todos li { display: flex; justify-content: space-between; align-items: center; gap: 10px;
+                padding: 13px 10px; border-bottom: 1px solid #eee; font-size: 16px;
+                cursor: pointer; user-select: none; }
+  ul.todos li small { color: #777; font-size: 13px; }
+  ul.todos li .marca { font-size: 13px; font-weight: 700; white-space: nowrap; color: #999; }
+  ul.todos li.hecho { background: #E8F5E9; cursor: default; }
+  ul.todos li.hecho .marca { color: var(--verde); font-size: 18px; }
+  ul.todos li.pend { background: #FFF8E1; }
+  ul.todos li.pend .marca { color: #B26A00; }
+  .nota { font-size: 12.5px; color: #666; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -103,7 +123,18 @@
       <div class="barra"><i id="prog"></i></div>
     </div>
 
+    <div class="tabs">
+      <button id="tabCam" class="activa" onclick="verModo('cam')">Cámara</button>
+      <button id="tabLista" onclick="verModo('lista')">Marcar a mano</button>
+    </div>
+
     <div id="reader"></div>
+
+    <div id="vistaLista" class="card oculto">
+      <input type="search" id="buscar" placeholder="Buscar nombre" oninput="pintarLista()">
+      <ul class="todos" id="listaTodos"></ul>
+      <div class="nota">Tocá a quien vino sin QR. Tenés 3 segundos para volver a tocar y deshacerlo.</div>
+    </div>
 
     <div class="card">
       <details>
@@ -130,6 +161,10 @@ let ctx = null;               // {fecha, bloque, inicio, actividad}
 let scanner = null;
 let pausado = false;
 let ultimoCodigo = '', ultimoTs = 0;
+let pendientesManual = {};    // codigo -> timeout (marcados a mano, todavía se pueden deshacer)
+let modoLista = false;
+let pausadoPorLista = false;
+const DESHACER_MS = 3000;
 
 const LS_COLA = 'cola_asistencia_v1';
 const LS_PADRON = 'padron_v1';
@@ -290,6 +325,15 @@ function onScan(texto) {
   if (!j) { beep(200); feedback('Código desconocido', 'No está en el padrón', 'err'); return; }
   if (escaneados[codigo]) { beep(200); feedback(j.nombre, 'YA fue escaneado', 'err'); return; }
 
+  // Si justo lo estaban marcando a mano, gana el QR y se cancela lo manual
+  if (pendientesManual[codigo]) { clearTimeout(pendientesManual[codigo]); delete pendientesManual[codigo]; }
+
+  registrar(codigo, 'QR');
+}
+
+/** Registra a un janij como pasado, sea por QR o a mano. */
+function registrar(codigo, origen) {
+  const j = porCodigo[codigo];
   const d = new Date();
   const hora = String(d.getHours()).padStart(2, '0') + ':' +
                String(d.getMinutes()).padStart(2, '0') + ':' +
@@ -299,7 +343,7 @@ function onScan(texto) {
   escaneados[codigo] = true;
   encolar({
     codigo: codigo, fecha: ctx.fecha, bloque: ctx.bloque,
-    actividad: ctx.actividad, hora: hora, inicio: ctx.inicio
+    actividad: ctx.actividad, hora: hora, inicio: ctx.inicio, origen: origen
   });
 
   beep(estado === 'Presente' ? 900 : 500);
@@ -337,6 +381,94 @@ function actualizarUI() {
     'Faltan ' + faltan.length + ' — tocá para ver quiénes';
   document.getElementById('listaFaltan').innerHTML =
     faltan.map(j => '<li>' + j.nombre + (j.depto ? ' <small>· ' + j.depto + '</small>' : '') + '</li>').join('');
+  if (modoLista) pintarLista();
+}
+
+// =====================================================================
+//  Marcar a mano (para quien no trajo el QR)
+// =====================================================================
+function verModo(m) {
+  modoLista = (m === 'lista');
+  document.getElementById('reader').classList.toggle('oculto', modoLista);
+  document.getElementById('btnPausa').classList.toggle('oculto', modoLista);
+  document.getElementById('vistaLista').classList.toggle('oculto', !modoLista);
+  document.getElementById('tabCam').classList.toggle('activa', !modoLista);
+  document.getElementById('tabLista').classList.toggle('activa', modoLista);
+
+  // La cámara se pausa mientras estás en la lista (ahorra batería y evita escaneos sin querer)
+  try {
+    if (modoLista && scanner && !pausado) { scanner.pause(true); pausadoPorLista = true; }
+    if (!modoLista && pausadoPorLista) { scanner.resume(); pausadoPorLista = false; }
+  } catch (e) { pausadoPorLista = false; }
+
+  if (modoLista) pintarLista();
+}
+
+function normTxt(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function pintarLista() {
+  const q = normTxt(document.getElementById('buscar').value);
+  const lista = PADRON
+    .filter(j => !q || normTxt(j.nombre + ' ' + (j.depto || '')).indexOf(q) !== -1)
+    .sort((a, b) => {
+      // primero los que faltan, después los que ya pasaron; dentro, alfabético
+      const ha = escaneados[a.codigo.toUpperCase()] ? 1 : 0;
+      const hb = escaneados[b.codigo.toUpperCase()] ? 1 : 0;
+      return ha - hb || a.nombre.localeCompare(b.nombre, 'es');
+    });
+
+  document.getElementById('listaTodos').innerHTML = lista.map(j => {
+    const c = j.codigo.toUpperCase();
+    const cls = escaneados[c] ? 'hecho' : (pendientesManual[c] ? 'pend' : '');
+    const marca = escaneados[c] ? '✓' : (pendientesManual[c] ? 'Tocá para deshacer' : '');
+    return '<li class="' + cls + '" data-c="' + esc(c) + '"><span>' + esc(j.nombre) +
+           (j.depto ? ' <small>' + esc(j.depto) + '</small>' : '') + '</span>' +
+           '<span class="marca">' + marca + '</span></li>';
+  }).join('') || '<li style="cursor:default;color:#777">No encontré a nadie con ese nombre</li>';
+}
+
+document.getElementById('listaTodos').addEventListener('click', function (e) {
+  const li = e.target.closest('li[data-c]');
+  if (li) tocarManual(li.getAttribute('data-c'));
+});
+
+function tocarManual(codigo) {
+  const j = porCodigo[codigo];
+  if (!j) return;
+
+  // Segundo toque dentro de los 3 segundos: deshacer
+  if (pendientesManual[codigo]) {
+    clearTimeout(pendientesManual[codigo]);
+    delete pendientesManual[codigo];
+    feedback(j.nombre, 'Deshecho, no se marcó', '');
+    pintarLista();
+    return;
+  }
+  if (escaneados[codigo]) { feedback(j.nombre, 'Ya estaba registrado', 'warn'); return; }
+
+  pendientesManual[codigo] = setTimeout(function () { confirmarManual(codigo); }, DESHACER_MS);
+  feedback(j.nombre, 'Marcando… tocá de nuevo para deshacer', 'warn');
+  pintarLista();
+}
+
+function confirmarManual(codigo) {
+  delete pendientesManual[codigo];
+  if (escaneados[codigo]) return;   // mientras tanto lo escanearon
+  registrar(codigo, 'Manual');
+}
+
+/** Al terminar, los marcados a mano que siguen en espera se confirman ya. */
+function confirmarPendientesManual() {
+  Object.keys(pendientesManual).forEach(function (c) {
+    clearTimeout(pendientesManual[c]);
+    confirmarManual(c);
+  });
 }
 
 function pausar() {
@@ -348,6 +480,7 @@ function pausar() {
 }
 
 async function terminar() {
+  confirmarPendientesManual();
   const faltan = PADRON.length - Object.keys(escaneados).length;
   const msg = faltan
     ? faltan + ' janij(im) no fueron escaneados y van a quedar como FALTA.\n\n¿Cerrar el bloque igual?'
